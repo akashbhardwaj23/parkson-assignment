@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Inventory</title>
+</head>
+<body>
+  <h1>Current Inventory</h1>
+  <ul>
+    {% for item in inventory %}
+      <li>{{ item.name }} (SKU: {{ item.sku }}) — Stock: {{ item.current_stock }}</li>
+    {% endfor %}
+  </ul>
+</body>
+</html>

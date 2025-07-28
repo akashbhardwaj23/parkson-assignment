@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Transactions</title>
+</head>
+<body>
+  <h1>Stock Transactions</h1>
+  {% for txn in transactions %}
+    <div style="margin-bottom:20px;">
+      <strong>ID:</strong> {{ txn.id }} |
+      <strong>Type:</strong> {{ txn.type }} |
+      <strong>Reference:</strong> {{ txn.reference }} |
+      <strong>Date:</strong> {{ txn.date }}
+      <ul>
+        {% for detail in txn.details.all %}
+          <li>{{ detail.product.name }}: {{ detail.quantity }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% empty %}
+    <p>No transactions available.</p>
+  {% endfor %}
+</body>
+</html>

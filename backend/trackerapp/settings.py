@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/#_a-name-auth-password-valida
 """
 
 from pathlib import Path
+from os import path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -20,6 +21,8 @@ SECRET_KEY = 'django-insecure-*ewk&b%$)l145kcp141=t6cv%s^9_82s6qnwfc6552n_-(fe*1
 
 DEBUG = True
 
+
+print("Base dir ", BASE_DIR)
 # Good for development, but specify exact domains in production
 ALLOWED_HOSTS = ['*']
 
@@ -32,7 +35,6 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'corsheaders',              # Recommended: place before your apps and DRF
     'rest_framework',
     'inventory',                # Your app
 ]
@@ -54,7 +56,7 @@ ROOT_URLCONF = 'trackerapp.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [path.join(BASE_DIR, 'inventory', 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
