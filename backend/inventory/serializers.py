@@ -1,77 +1,85 @@
-# inventory/serializers.py
 from rest_framework import serializers
+from django.db import transaction as db_transaction
 from .models import Product, StockTransaction, StockDetail
+
 
 class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
-        fields = '__all__'
-        read_only_fields = ('created_at', 'updated_at')
+        fields = ['id', 'name', 'sku', 'description', 'current_stock', 'min_stock', 'max_stock']
+        read_only_fields = ('current_stock', 'created_at', 'updated_at')
 
-class StockDetailSerializer(serializers.ModelSerializer):
-    product_name = serializers.CharField(source='product.name', read_only=True)
-    product_sku = serializers.CharField(source='product.sku', read_only=True)
+class TransactionDetailSerializer(serializers.ModelSerializer):
+    product = ProductSerializer(read_only=True)
 
     class Meta:
         model = StockDetail
-        fields = ['product', 'product_name', 'product_sku', 'quantity']
-        # 'product' is for writing (ID), 'product_name' and 'product_sku' for reading
+        fields = ['id', 'product', 'product_id', 'quantity', 'unit_price']
+        extra_kwargs = {
+            'product_id': {'write_only': True, 'source': 'product'}
+        }
 
-class StockTransactionSerializer(serializers.ModelSerializer):
-    details = StockDetailSerializer(many=True) # Nested serializer for stock details
+class TransactionSerializer(serializers.ModelSerializer):
+    details = TransactionDetailSerializer(many=True)
+    total_items = serializers.SerializerMethodField()
 
     class Meta:
         model = StockTransaction
-        fields = ['id', 'transaction_type', 'transaction_date', 'reference_number', 'notes', 'details']
-        read_only_fields = ('transaction_date',)
+        fields = ['id', 'type', 'date', 'reference', 'total_items', 'notes', 'details']
+        read_only_fields = ('date', 'total_items',)
+
+    def get_total_items(self, obj):
+        return sum(detail.quantity for detail in obj.details.all())
 
     def create(self, validated_data):
         details_data = validated_data.pop('details')
-        transaction = StockTransaction.objects.create(**validated_data)
+        with db_transaction.atomic():
+            transaction_instance = StockTransaction.objects.create(**validated_data)
 
-        for detail_data in details_data:
-            product = detail_data['product']
-            quantity = detail_data['quantity']
+            for detail_data in details_data:
+                product_obj = detail_data['product']
+                quantity = detail_data['quantity']
+                unit_price = detail_data.get('unit_price', 0.00)
 
-            if transaction.transaction_type == 'OUT' and quantity < 0:
-                raise serializers.ValidationError("Outward transactions cannot have negative quantities.")
-            if transaction.transaction_type == 'IN' and quantity <= 0:
-                 raise serializers.ValidationError("Inward transactions must have positive quantities.")
+                if not Product.objects.filter(id=product_obj.id).exists():
+                    raise serializers.ValidationError(f"Product with ID {product_obj.id} does not exist.")
+                if quantity <= 0:
+                    raise serializers.ValidationError("Quantity must be greater than zero for any transaction detail.")
 
+                product_to_update = Product.objects.select_for_update().get(id=product_obj.id)
 
-            # Basic validation: ensure product exists and quantity is positive for IN, or non-negative for OUT
-            if not Product.objects.filter(id=product.id).exists():
-                raise serializers.ValidationError(f"Product with ID {product.id} does not exist.")
-            if quantity == 0:
-                raise serializers.ValidationError("Quantity cannot be zero for any transaction.")
+                if transaction_instance.type == 'IN':
+                    product_to_update.current_stock += quantity
+                    if product_to_update.current_stock > product_to_update.max_stock:
+                        print(f"Warning: Stock for {product_to_update.name} ({product_to_update.current_stock}) "
+                              f"exceeded max stock ({product_to_update.max_stock}).")
 
+                elif transaction_instance.type == 'OUT':
+                    if quantity < 0:
+                        raise serializers.ValidationError("Outward quantities must be positive.")
 
-            if transaction.transaction_type == 'OUT':
-                current_stock = self.get_current_stock_for_product(product.id)
-                if current_stock < quantity:
-                    raise serializers.ValidationError(f"Insufficient stock for product '{product.name}'. "
-                                                      f"Available: {current_stock}, Requested: {quantity}")
+                    if product_to_update.current_stock < quantity:
+                        raise serializers.ValidationError(f"Insufficient stock for product '{product_to_update.name}'. "
+                                                          f"Available: {product_to_update.current_stock}, Requested: {quantity}.")
+                    product_to_update.current_stock -= quantity
+                    if product_to_update.current_stock < product_to_update.min_stock:
+                        print(f"Warning: Stock for {product_to_update.name} ({product_to_update.current_stock}) "
+                              f"fell below min stock ({product_to_update.min_stock}).")
+                else:
+                    raise serializers.ValidationError(f"Invalid transaction type: {transaction_instance.type}")
 
-            StockDetail.objects.create(transaction=transaction, **detail_data)
+                product_to_update.save()
 
-        return transaction
+                StockDetail.objects.create(
+                    transaction=transaction_instance,
+                    product=product_to_update,
+                    quantity=quantity,
+                    unit_price=unit_price
+                )
 
-    # Get the current stock of the product
-    def get_current_stock_for_product(self, product_id):
-        in_quantity = StockDetail.objects.filter(
-            product_id=product_id,
-            transaction__transaction_type='IN'
-        ).aggregate(total=serializers.Sum('quantity'))['total'] or 0
+            return transaction_instance
 
-        out_quantity = StockDetail.objects.filter(
-            product_id=product_id,
-            transaction__transaction_type='OUT'
-        ).aggregate(total=serializers.Sum('quantity'))['total'] or 0
-
-        return in_quantity - out_quantity
-
-class InventorySerializer(serializers.Serializer):
-    product_id = serializers.IntegerField()
-    product_name = serializers.CharField()
-    product_sku = serializers.CharField()
-    current_stock = serializers.IntegerField()
+class InventorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = ['id', 'name', 'sku', 'current_stock', 'min_stock', 'max_stock']
